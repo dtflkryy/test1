@@ -1,0 +1,446 @@
+-- ===================================================
+-- ULTIMATE BOOMBOX SCRIPT FOR DELTA X EXECUTOR
+-- ===================================================
+local Players = game:GetService("Players")
+local CoreGui = game:GetService("CoreGui")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+
+local player = Players.LocalPlayer
+
+-- Xóa GUI cũ nếu đã chạy trước đó
+if player.PlayerGui:FindFirstChild("BoomboxGUI") then
+    player.PlayerGui.BoomboxGUI:Destroy()
+end
+if CoreGui:FindFirstChild("BoomboxGUI") then
+    CoreGui.BoomboxGUI:Destroy()
+end
+
+-- Biến lưu trữ tool và các thành phần âm thanh
+local tool, handle, sound, eq, distortion
+local currentWeld = nil
+
+-- Hàm tạo Boombox Tool
+local function createBoomboxTool()
+    local backpack = player:FindFirstChild("Backpack")
+    local character = player.Character
+    if not backpack then return end
+
+    -- Kiểm tra nếu đã có tool trong backpack hoặc character
+    if backpack:FindFirstChild("ProBoombox") or (character and character:FindFirstChild("ProBoombox")) then
+        return
+    end
+
+    tool = Instance.new("Tool")
+    tool.Name = "ProBoombox"
+    tool.RequiresHandle = true
+    tool.ToolTip = "Ultimate Boombox - Delta X"
+
+    handle = Instance.new("Part")
+    handle.Name = "Handle"
+    handle.Size = Vector3.new(1.2, 0.8, 2)
+    handle.CanCollide = false
+
+    -- Thử tải item ID 212641536, nếu lỗi sẽ dùng block mặc định kèm mesh
+    local success, objects = pcall(function()
+        return game:GetObjects("rbxassetid://212641536")
+    end)
+
+    if success and objects and #objects > 0 then
+        local loaded = objects[1]
+        if loaded:IsA("Tool") and loaded:FindFirstChild("Handle") then
+            handle:Destroy()
+            handle = loaded.Handle:Clone()
+            handle.Name = "Handle"
+            loaded:Destroy()
+        end
+    end
+
+    -- Đảm bảo có SpecialMesh nếu chưa có
+    if not handle:FindFirstChildOfClass("SpecialMesh") and not handle:FindFirstChildOfClass("MeshPart") then
+        local mesh = Instance.new("SpecialMesh")
+        mesh.MeshType = Enum.MeshType.FileMesh
+        mesh.MeshId = "rbxassetid://212641536"
+        mesh.Scale = Vector3.new(1, 1, 1)
+        mesh.Parent = handle
+    end
+
+    handle.Parent = tool
+
+    -- Cài đặt Sound
+    sound = Instance.new("Sound")
+    sound.Name = "BoomboxSound"
+    sound.SoundId = "rbxassetid://1848354536" -- Nhạc mặc định
+    sound.Volume = 2
+    sound.Looped = true
+    sound.RollOffMaxDistance = 150
+    sound.RollOffMinDistance = 15
+    sound.Parent = handle
+
+    -- Hiệu ứng Bass (Equalizer)
+    eq = Instance.new("EqualizerSoundEffect")
+    eq.Name = "BassBoost"
+    eq.LowGain = 0 -- Chỉnh bass
+    eq.MidGain = 0
+    eq.HighGain = 0
+    eq.Parent = sound
+
+    -- Hiệu ứng Độ "Beat" / Distortion
+    distortion = Instance.new("DistortionSoundEffect")
+    distortion.Name = "BeatDistortion"
+    distortion.Level = 0 -- Chỉnh độ đậm nhạt beat
+    distortion.Parent = sound
+
+    tool.Parent = backpack
+    setupToolEvents(tool, character)
+end
+
+-- Hàm gắn boombox ra sau lưng khi không cầm
+local function weldToBack(char)
+    if not char or not handle then return end
+    local torso = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso")
+    if not torso then return end
+
+    if currentWeld then currentWeld:Destroy() end
+
+    handle.Anchored = false
+    currentWeld = Instance.new("Weld")
+    currentWeld.Name = "BackWeld"
+    currentWeld.Part0 = torso
+    currentWeld.Part1 = handle
+    -- Vị trí hiển thị trên lưng
+    currentWeld.C0 = CFrame.new(0, 0.2, 0.6) * CFrame.Angles(0, math.rad(180), 0)
+    currentWeld.Parent = handle
+end
+
+local function removeWeld()
+    if currentWeld then
+        currentWeld:Destroy()
+        currentWeld = nil
+    end
+end
+
+function setupToolEvents(t, char)
+    t.Equipped:Connect(function()
+        removeWeld()
+    end)
+
+    t.Unequipped:Connect(function()
+        local character = player.Character
+        if character and character:FindFirstChild("Humanoid") and character.Humanoid.Health > 0 then
+            weldToBack(character)
+        end
+    end)
+
+    -- Mặc định khi mới nhận sẽ treo ở lưng nếu không cầm
+    if char then
+        weldToBack(char)
+    end
+end
+
+-- Xử lý khi nhân vật chết và hồi sinh (giữ lại boombox không bị mất)
+player.CharacterAdded:Connect(function(newChar)
+    task.wait(1.5)
+    createBoomboxTool()
+end)
+
+-- Tạo lần đầu tiên
+createBoomboxTool()
+
+-- ===================================================
+-- TẠO GIAO DIỆN (GUI)
+-- ===================================================
+local guiParent = gethui and gethui() or CoreGui
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "BoomboxGUI"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = guiParent
+
+-- Nút mở lại GUI khi ẩn
+local toggleButton = Instance.new("TextButton")
+toggleButton.Name = "ToggleGUI"
+toggleButton.Size = UDim2.new(0, 45, 0, 45)
+toggleButton.Position = UDim2.new(0, 20, 0.5, -22.5)
+toggleButton.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+toggleButton.Font = Enum.Font.GothamBold
+toggleButton.Text = "🎵"
+toggleButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+toggleButton.TextSize = 20
+toggleButton.Visible = false
+toggleButton.Parent = screenGui
+
+local tCorner = Instance.new("UICorner")
+tCorner.CornerRadius = UDim.new(1, 0)
+tCorner.Parent = toggleButton
+
+-- Khung chính GUI
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = "MainFrame"
+mainFrame.Size = UDim2.new(0, 320, 0, 410)
+mainFrame.Position = UDim2.new(0.5, -160, 0.5, -205)
+mainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 26)
+mainFrame.BorderSizePixel = 0
+mainFrame.Parent = screenGui
+
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 10)
+corner.Parent = mainFrame
+
+local stroke = Instance.new("UIStroke")
+stroke.Color = Color3.fromRGB(50, 50, 65)
+stroke.Thickness = 1.5
+stroke.Parent = mainFrame
+
+-- Thanh tiêu đề (TopBar)
+local topBar = Instance.new("Frame")
+topBar.Size = UDim2.new(1, 0, 0, 40)
+topBar.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+topBar.BorderSizePixel = 0
+topBar.Parent = mainFrame
+
+local topCorner = Instance.new("UICorner")
+topCorner.CornerRadius = UDim.new(0, 10)
+topCorner.Parent = topBar
+
+local topFix = Instance.new("Frame")
+topFix.Size = UDim2.new(1, 0, 0, 10)
+topFix.Position = UDim2.new(0, 0, 1, -10)
+topFix.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+topFix.BorderSizePixel = 0
+topFix.Parent = topBar
+
+-- Tiêu đề GUI
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, -90, 1, 0)
+title.Position = UDim2.new(0, 45, 0, 0)
+title.BackgroundTransparency = 1
+title.Font = Enum.Font.GothamBold
+title.Text = "BOOMBOX CONTROL"
+title.TextColor3 = Color3.fromRGB(255, 255, 255)
+title.TextSize = 13
+title.Parent = topBar
+
+-- Nút Khóa di chuyển (Góc trên bên trái)
+local lockBtn = Instance.new("TextButton")
+lockBtn.Size = UDim2.new(0, 35, 0, 35)
+lockBtn.Position = UDim2.new(0, 5, 0, 2.5)
+lockBtn.BackgroundTransparency = 1
+lockBtn.Font = Enum.Font.GothamBold
+lockBtn.Text = "🔓"
+lockBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
+lockBtn.TextSize = 15
+lockBtn.Parent = topBar
+
+-- Nút Đóng GUI (Góc trên bên phải)
+local closeBtn = Instance.new("TextButton")
+closeBtn.Size = UDim2.new(0, 35, 0, 35)
+closeBtn.Position = UDim2.new(1, -40, 0, 2.5)
+closeBtn.BackgroundTransparency = 1
+closeBtn.Font = Enum.Font.GothamBold
+closeBtn.Text = "✕"
+closeBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
+closeBtn.TextSize = 15
+closeBtn.Parent = topBar
+
+closeBtn.MouseButton1Click:Connect(function()
+    mainFrame.Visible = false
+    toggleButton.Visible = true
+end)
+
+toggleButton.MouseButton1Click:Connect(function()
+    mainFrame.Visible = true
+    toggleButton.Visible = false
+end)
+
+-- Logic Khóa/Mở khóa di chuyển GUI
+local isLocked = false
+lockBtn.MouseButton1Click:Connect(function()
+    isLocked = not isLocked
+    if isLocked then
+        lockBtn.Text = "🔒"
+        lockBtn.TextColor3 = Color3.fromRGB(255, 90, 90)
+    else
+        lockBtn.Text = "🔓"
+        lockBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
+    end
+end)
+
+local dragging, dragInput, dragStart, startPos
+topBar.InputBegan:Connect(function(input)
+    if isLocked then return end
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPos = mainFrame.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end
+end)
+
+topBar.InputChanged:Connect(function(input)
+    if isLocked then return end
+    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+        dragInput = input
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if dragging and input == dragInput and not isLocked then
+        local delta = input.Position - dragStart
+        mainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    end
+end)
+
+-- Nội dung bên trong GUI (ScrollingFrame)
+local container = Instance.new("ScrollingFrame")
+container.Size = UDim2.new(1, -20, 1, -55)
+container.Position = UDim2.new(0, 10, 0, 48)
+container.BackgroundTransparency = 1
+container.BorderSizePixel = 0
+container.CanvasSize = UDim2.new(0, 0, 0, 370)
+container.ScrollBarThickness = 3
+container.Parent = mainFrame
+
+local layout = Instance.new("UIListLayout")
+layout.SortOrder = Enum.SortOrder.LayoutOrder
+layout.Padding = UDim.new(0, 10)
+layout.Parent = container
+
+-- Hàm tạo các ô chức năng nhập số / text
+local function createInputRow(labelText, placeholder, defaultVal, callback)
+    local f = Instance.new("Frame")
+    f.Size = UDim2.new(1, 0, 0, 50)
+    f.BackgroundTransparency = 1
+
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(1, 0, 0, 18)
+    lbl.BackgroundTransparency = 1
+    lbl.Font = Enum.Font.GothamMedium
+    lbl.Text = labelText
+    lbl.TextColor3 = Color3.fromRGB(190, 190, 205)
+    lbl.TextSize = 12
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Parent = f
+
+    local box = Instance.new("TextBox")
+    box.Size = UDim2.new(1, 0, 0, 28)
+    box.Position = UDim2.new(0, 0, 0, 20)
+    box.BackgroundColor3 = Color3.fromRGB(28, 28, 36)
+    box.Font = Enum.Font.Gotham
+    box.PlaceholderText = placeholder
+    box.Text = tostring(defaultVal)
+    box.TextColor3 = Color3.fromRGB(255, 255, 255)
+    box.PlaceholderColor3 = Color3.fromRGB(100, 100, 120)
+    box.TextSize = 12
+    box.ClearTextOnFocus = false
+    box.Parent = f
+
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, 6)
+    c.Parent = box
+
+    box.FocusLost:Connect(function()
+        if callback then callback(box.Text) end
+    end)
+
+    return f
+end
+
+-- 1. Ô nhập ID Nhạc
+createInputRow("Music ID (Audio Asset ID):", "Nhập ID bài hát...", "1848354536", function(text)
+    local id = text:match("%d+")
+    if id and sound then
+        sound.SoundId = "rbxassetid://" .. id
+        sound:Play()
+    end
+end).LayoutOrder = 1
+
+-- 2. Ô điều chỉnh tốc độ (Playback Speed)
+createInputRow("Tốc độ phát (Playback Speed):", "Ví dụ: 1, 1.5, 0.5...", "1", function(text)
+    local num = tonumber(text)
+    if num and sound then
+        sound.PlaybackSpeed = math.clamp(num, 0.1, 5)
+    end
+end).LayoutOrder = 2
+
+-- 3. Ô điều chỉnh Bass (LowGain dB)
+createInputRow("Độ Bass (LowGain: 0 - 30 dB):", "Ví dụ: 10, 20...", "0", function(text)
+    local num = tonumber(text)
+    if num and eq then
+        eq.LowGain = math.clamp(num, 0, 30)
+    end
+end).LayoutOrder = 3
+
+-- 4. Ô điều chỉnh độ đậm Beat / Distortion
+createInputRow("Độ đậm Beat / Distortion (0 - 1):", "Ví dụ: 0.2, 0.6...", "0", function(text)
+    local num = tonumber(text)
+    if num and distortion then
+        distortion.Level = math.clamp(num, 0, 1)
+    end
+end).LayoutOrder = 4
+
+-- 5. Cụm nút bấm điều khiển (Phát/Dừng & Tạm dừng)
+local btnRow = Instance.new("Frame")
+btnRow.Size = UDim2.new(1, 0, 0, 38)
+btnRow.BackgroundTransparency = 1
+btnRow.LayoutOrder = 5
+btnRow.Parent = container
+
+local playBtn = Instance.new("TextButton")
+playBtn.Size = UDim2.new(0.48, 0, 1, 0)
+playBtn.BackgroundColor3 = Color3.fromRGB(38, 110, 70)
+playBtn.Font = Enum.Font.GothamBold
+playBtn.Text = "Phát / Dừng"
+playBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+playBtn.TextSize = 12
+playBtn.Parent = btnRow
+
+local pCorner1 = Instance.new("UICorner")
+pCorner1.CornerRadius = UDim.new(0, 6)
+pCorner1.Parent = playBtn
+
+playBtn.MouseButton1Click:Connect(function()
+    if sound then
+        if sound.Playing then
+            sound:Stop()
+            playBtn.BackgroundColor3 = Color3.fromRGB(38, 110, 70)
+        else
+            sound:Play()
+            playBtn.BackgroundColor3 = Color3.fromRGB(130, 45, 45)
+        end
+    end
+end)
+
+local pauseBtn = Instance.new("TextButton")
+pauseBtn.Size = UDim2.new(0.48, 0, 1, 0)
+pauseBtn.Position = UDim2.new(0.52, 0, 0, 0)
+pauseBtn.BackgroundColor3 = Color3.fromRGB(110, 85, 35)
+pauseBtn.Font = Enum.Font.GothamBold
+pauseBtn.Text = "Tạm dừng"
+pauseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+pauseBtn.TextSize = 12
+pauseBtn.Parent = btnRow
+
+local pCorner2 = Instance.new("UICorner")
+pCorner2.CornerRadius = UDim.new(0, 6)
+pCorner2.Parent = pauseBtn
+
+local isPaused = false
+pauseBtn.MouseButton1Click:Connect(function()
+    if sound then
+        if sound.IsPlaying and not isPaused then
+            sound:Pause()
+            isPaused = true
+            pauseBtn.BackgroundColor3 = Color3.fromRGB(35, 80, 120)
+            pauseBtn.Text = "Tiếp tục"
+        elseif isPaused then
+            sound:Resume()
+            isPaused = false
+            pauseBtn.BackgroundColor3 = Color3.fromRGB(110, 85, 35)
+            pauseBtn.Text = "Tạm dừng"
+        end
+    end
+end)
