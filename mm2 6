@@ -1,0 +1,425 @@
+--// MM2 HUB | Murder Mystery 2 | Delta X (mobile/PC)
+local gg = (getgenv and getgenv()) or _G
+if gg.MM2HubUnload then pcall(gg.MM2HubUnload) end
+
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+local UIS = game:GetService("UserInputService")
+local Lighting = game:GetService("Lighting")
+local VirtualUser = game:GetService("VirtualUser")
+local TeleportService = game:GetService("TeleportService")
+local LP = Players.LocalPlayer
+local Cam = workspace.CurrentCamera
+
+local WHITE = Color3.new(1, 1, 1)
+local OFF = Color3.fromRGB(70, 70, 80)
+local running = true
+local conns = {}
+
+local function bind(sig, fn)
+	local c = sig:Connect(fn)
+	conns[#conns + 1] = c
+	return c
+end
+local function new(cls, props, par)
+	local o = Instance.new(cls)
+	for k, v in pairs(props or {}) do o[k] = v end
+	if par then o.Parent = par end
+	return o
+end
+local function tw(o, t, props, style, dir)
+	local tween = TweenService:Create(o, TweenInfo.new(t, style or Enum.EasingStyle.Quint, dir or Enum.EasingDirection.Out), props)
+	tween:Play()
+	return tween
+end
+local function corner(o, r) return new("UICorner", {CornerRadius = r or UDim.new(0, 10)}, o) end
+
+--// GUI root
+local gui = new("ScreenGui", {Name = "MM2Hub", ResetOnSpawn = false, ZIndexBehavior = Enum.ZIndexBehavior.Sibling, IgnoreGuiInset = true, DisplayOrder = 999})
+local okParent = pcall(function() gui.Parent = (gethui and gethui()) or game:GetService("CoreGui") end)
+if not okParent or not gui.Parent then gui.Parent = LP:WaitForChild("PlayerGui") end
+
+--// State
+local S = {
+	speedOn = false, speed = 32, jumpOn = false, jump = 70, inf = false, noclip = false,
+	fly = false, flySpeed = 60, coin = false, coinSpeed = 45, autoGun = false,
+	esp = false, tags = false, hud = false, full = false, fov = 70, afk = true, particles = true,
+}
+local locked = false
+local flyBV
+
+--// Theme core
+local accent = Color3.fromRGB(140, 120, 255)
+local accentObjs, refreshers = {}, {}
+local function regAccent(o, p) accentObjs[#accentObjs + 1] = {o, p}; o[p] = accent end
+local function setAccent(c)
+	accent = c
+	for _, a in ipairs(accentObjs) do a[1][a[2]] = c end
+	for _, f in ipairs(refreshers) do f() end
+end
+
+local Themes = {
+	{name = "Midnight", icon = "🌙", a = Color3.fromRGB(18, 18, 34), b = Color3.fromRGB(48, 30, 92), acc = Color3.fromRGB(140, 120, 255)},
+	{name = "Ocean", icon = "🌊", a = Color3.fromRGB(8, 28, 52), b = Color3.fromRGB(14, 100, 140), acc = Color3.fromRGB(70, 200, 255)},
+	{name = "Sunset", icon = "🌇", a = Color3.fromRGB(52, 16, 40), b = Color3.fromRGB(180, 70, 50), acc = Color3.fromRGB(255, 160, 80)},
+	{name = "Mint", icon = "🍃", a = Color3.fromRGB(14, 40, 40), b = Color3.fromRGB(30, 110, 100), acc = Color3.fromRGB(90, 240, 200)},
+	{name = "Dark", icon = "⚫", a = Color3.fromRGB(16, 16, 18), b = Color3.fromRGB(36, 36, 42), acc = Color3.fromRGB(200, 200, 210)},
+	{name = "RGB Rainbow", icon = "🌈", special = "rainbow", a = Color3.fromRGB(20, 20, 20), b = Color3.fromRGB(60, 60, 60), acc = WHITE},
+	{name = "Valentine", icon = "❤", special = "valentine", a = Color3.fromRGB(70, 12, 40), b = Color3.fromRGB(170, 40, 100), acc = Color3.fromRGB(255, 105, 160)},
+	{name = "Lucky", icon = "🍀", special = "lucky", a = Color3.fromRGB(8, 48, 28), b = Color3.fromRGB(30, 120, 60), acc = Color3.fromRGB(130, 235, 120)},
+}
+local curTheme = Themes[1]
+local vA, vB, vAcc = Instance.new("Color3Value"), Instance.new("Color3Value"), Instance.new("Color3Value")
+
+--// Toast
+local function notify(msg)
+	local t = new("TextLabel", {AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, -40), Size = UDim2.fromOffset(240, 32),
+		BackgroundColor3 = Color3.fromRGB(20, 20, 28), BackgroundTransparency = 0.15, Text = msg, TextColor3 = WHITE,
+		Font = Enum.Font.GothamMedium, TextSize = 13, ZIndex = 100}, gui)
+	corner(t, UDim.new(0, 10))
+	tw(t, 0.35, {Position = UDim2.new(0.5, 0, 0, 44)}, Enum.EasingStyle.Back)
+	task.delay(2, function()
+		tw(t, 0.3, {Position = UDim2.new(0.5, 0, 0, -40), TextTransparency = 1, BackgroundTransparency = 1})
+		task.delay(0.35, function() t:Destroy() end)
+	end)
+end
+
+--// Main window
+local main = new("CanvasGroup", {Name = "Main", AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
+	Size = UDim2.fromOffset(330, 300), BackgroundColor3 = WHITE, BorderSizePixel = 0, GroupTransparency = 1, Visible = false}, gui)
+corner(main, UDim.new(0, 16))
+local mainStroke = new("UIStroke", {Thickness = 1.5, Transparency = 0.2}, main)
+regAccent(mainStroke, "Color")
+local grad = new("UIGradient", {Rotation = 135}, main)
+local mainScale = new("UIScale", {Scale = 0}, main)
+
+bind(vA.Changed, function() grad.Color = ColorSequence.new(vA.Value, vB.Value) end)
+bind(vB.Changed, function() grad.Color = ColorSequence.new(vA.Value, vB.Value) end)
+bind(vAcc.Changed, function() setAccent(vAcc.Value) end)
+
+-- glass shine
+local shine = new("Frame", {Size = UDim2.fromScale(1, 1), BackgroundColor3 = WHITE, BorderSizePixel = 0, ZIndex = 1}, main)
+new("UIGradient", {Rotation = 90, Transparency = NumberSequence.new({
+	NumberSequenceKeypoint.new(0, 0.86), NumberSequenceKeypoint.new(0.5, 0.96), NumberSequenceKeypoint.new(1, 1)})}, shine)
+
+local particleLayer = new("Frame", {BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), ZIndex = 2}, main)
+
+-- top bar
+local top = new("Frame", {Size = UDim2.new(1, 0, 0, 38), BackgroundTransparency = 1, ZIndex = 3}, main)
+local lockBtn = new("TextButton", {Position = UDim2.fromOffset(8, 5), Size = UDim2.fromOffset(28, 28), BackgroundColor3 = Color3.new(0, 0, 0),
+	BackgroundTransparency = 0.5, Text = "🔓", TextSize = 14, Font = Enum.Font.GothamBold, TextColor3 = WHITE, AutoButtonColor = false}, top)
+corner(lockBtn, UDim.new(1, 0))
+local title = new("TextLabel", {Position = UDim2.fromOffset(46, 0), Size = UDim2.new(1, -96, 1, 0), BackgroundTransparency = 1,
+	Text = "MM2 HUB", Font = Enum.Font.GothamBlack, TextSize = 16, TextXAlignment = Enum.TextXAlignment.Left}, top)
+regAccent(title, "TextColor3")
+local closeBtn = new("TextButton", {AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -8, 0, 5), Size = UDim2.fromOffset(28, 28),
+	BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 0.5, Text = "–", TextSize = 18, Font = Enum.Font.GothamBold,
+	TextColor3 = WHITE, AutoButtonColor = false}, top)
+corner(closeBtn, UDim.new(1, 0))
+
+-- tabs + pages
+local tabBar = new("Frame", {Position = UDim2.fromOffset(8, 42), Size = UDim2.new(1, -16, 0, 28), BackgroundTransparency = 1, ZIndex = 3}, main)
+new("UIListLayout", {FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 4)}, tabBar)
+local pageHolder = new("Frame", {Position = UDim2.fromOffset(8, 76), Size = UDim2.new(1, -16, 1, -84), BackgroundTransparency = 1,
+	ClipsDescendants = true, ZIndex = 3}, main)
+
+local tabs, curTab = {}, 1
+local function selectTab(i)
+	curTab = i
+	for k, t in ipairs(tabs) do
+		local on = (k == i)
+		t.btn.BackgroundTransparency = on and 0.15 or 0.6
+		t.btn.BackgroundColor3 = on and accent or Color3.new(0, 0, 0)
+		if on and not t.page.Visible then
+			t.page.Position = UDim2.fromOffset(0, 12)
+			t.page.Visible = true
+			tw(t.page, 0.25, {Position = UDim2.fromOffset(0, 0)})
+		elseif not on then
+			t.page.Visible = false
+		end
+	end
+end
+refreshers[#refreshers + 1] = function() if tabs[curTab] then tabs[curTab].btn.BackgroundColor3 = accent end end
+
+local function newTab(name)
+	local btn = new("TextButton", {Size = UDim2.new(0.25, -3, 1, 0), BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 0.6,
+		Text = name, Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = WHITE, AutoButtonColor = false}, tabBar)
+	corner(btn, UDim.new(0, 8))
+	local page = new("ScrollingFrame", {Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3,
+		CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, Visible = false}, pageHolder)
+	new("UIListLayout", {Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder}, page)
+	new("UIPadding", {PaddingTop = UDim.new(0, 2), PaddingBottom = UDim.new(0, 6)}, page)
+	tabs[#tabs + 1] = {btn = btn, page = page}
+	local idx = #tabs
+	bind(btn.MouseButton1Click, function() selectTab(idx) end)
+	return page
+end
+
+--// Widgets
+local function row(page, h)
+	local f = new("Frame", {Size = UDim2.new(1, -6, 0, h or 36), BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 0.55, BorderSizePixel = 0}, page)
+	corner(f)
+	new("UIStroke", {Color = WHITE, Transparency = 0.85}, f)
+	return f
+end
+local function label(par, text, pos, size, xa)
+	return new("TextLabel", {BackgroundTransparency = 1, Text = text, Font = Enum.Font.GothamMedium, TextSize = 13, TextColor3 = WHITE,
+		TextXAlignment = xa or Enum.TextXAlignment.Left, Position = pos, Size = size}, par)
+end
+local function addHeader(page, text)
+	local l = new("TextLabel", {Size = UDim2.new(1, -6, 0, 18), BackgroundTransparency = 1, Text = string.upper(text), Font = Enum.Font.GothamBold,
+		TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left}, page)
+	regAccent(l, "TextColor3")
+end
+local function addToggle(page, text, key, cb)
+	local r = row(page)
+	label(r, text, UDim2.fromOffset(12, 0), UDim2.new(1, -70, 1, 0))
+	local sw = new("TextButton", {Text = "", AutoButtonColor = false, AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -10, 0.5, 0),
+		Size = UDim2.fromOffset(40, 20), BackgroundColor3 = OFF}, r)
+	corner(sw, UDim.new(1, 0))
+	local knob = new("Frame", {Size = UDim2.fromOffset(16, 16), Position = UDim2.fromOffset(2, 2), BackgroundColor3 = WHITE}, sw)
+	corner(knob, UDim.new(1, 0))
+	local function paint(anim)
+		local on = S[key]
+		local col = on and accent or OFF
+		local pos = on and UDim2.fromOffset(22, 2) or UDim2.fromOffset(2, 2)
+		if anim then
+			tw(sw, 0.2, {BackgroundColor3 = col})
+			tw(knob, 0.25, {Position = pos}, Enum.EasingStyle.Back)
+		else
+			sw.BackgroundColor3 = col
+			knob.Position = pos
+		end
+	end
+	refreshers[#refreshers + 1] = function() if S[key] then sw.BackgroundColor3 = accent end end
+	bind(sw.MouseButton1Click, function()
+		S[key] = not S[key]
+		paint(true)
+		if cb then cb(S[key]) end
+	end)
+	paint(false)
+end
+local function addSlider(page, text, key, min, max, cb)
+	local r = row(page, 48)
+	label(r, text, UDim2.fromOffset(12, 4), UDim2.new(1, -70, 0, 18))
+	local val = label(r, tostring(S[key]), UDim2.new(1, -62, 0, 4), UDim2.fromOffset(50, 18), Enum.TextXAlignment.Right)
+	local bar = new("Frame", {Position = UDim2.new(0, 12, 0, 32), Size = UDim2.new(1, -24, 0, 6), BackgroundColor3 = OFF, BorderSizePixel = 0}, r)
+	corner(bar, UDim.new(1, 0))
+	local fill = new("Frame", {Size = UDim2.fromScale((S[key] - min) / (max - min), 1), BorderSizePixel = 0}, bar)
+	corner(fill, UDim.new(1, 0))
+	regAccent(fill, "BackgroundColor3")
+	local hit = new("TextButton", {Position = UDim2.fromOffset(6, 22), Size = UDim2.new(1, -12, 0, 24), BackgroundTransparency = 1, Text = ""}, r)
+	local dragging = false
+	local function upd(x)
+		local a = math.clamp((x - bar.AbsolutePosition.X) / math.max(bar.AbsoluteSize.X, 1), 0, 1)
+		local v = math.floor(min + (max - min) * a + 0.5)
+		S[key] = v
+		fill.Size = UDim2.fromScale(a, 1)
+		val.Text = tostring(v)
+		if cb then cb(v) end
+	end
+	local function isPtr(i) return i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch end
+	bind(hit.InputBegan, function(i)
+		if isPtr(i) then dragging = true; page.ScrollingEnabled = false; upd(i.Position.X) end
+	end)
+	bind(UIS.InputChanged, function(i)
+		if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then upd(i.Position.X) end
+	end)
+	bind(UIS.InputEnded, function(i)
+		if dragging and isPtr(i) then dragging = false; page.ScrollingEnabled = true end
+	end)
+end
+local function addButton(page, text, cb)
+	local r = row(page, 34)
+	local b = new("TextButton", {Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = text, Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = WHITE}, r)
+	bind(b.MouseButton1Click, function()
+		tw(r, 0.08, {BackgroundTransparency = 0.25})
+		task.delay(0.1, function() tw(r, 0.3, {BackgroundTransparency = 0.55}) end)
+		if cb then task.spawn(cb) end
+	end)
+end
+
+--// Game logic
+local function getChar() return LP.Character end
+local function getHRP() local c = LP.Character; return c and c:FindFirstChild("HumanoidRootPart") end
+local function getHum() local c = LP.Character; return c and c:FindFirstChildOfClass("Humanoid") end
+
+local function getRole(plr)
+	local char, bp = plr.Character, plr:FindFirstChild("Backpack")
+	local function has(n) return (char and char:FindFirstChild(n)) or (bp and bp:FindFirstChild(n)) end
+	if has("Knife") then return "Murderer" end
+	if has("Gun") then return "Sheriff" end
+	return "Innocent"
+end
+
+local function anyPart(container)
+	if not container then return nil end
+	local list = {}
+	for _, d in ipairs(container:GetDescendants()) do if d:IsA("BasePart") then list[#list + 1] = d end end
+	return list[#list > 0 and math.random(#list) or 1]
+end
+local function findMap()
+	for _, m in ipairs(workspace:GetChildren()) do
+		if m:IsA("Model") and m:FindFirstChild("CoinContainer") then return m end
+	end
+end
+local function tpTo(part)
+	local hrp = getHRP()
+	if hrp and part then hrp.CFrame = part.CFrame + Vector3.new(0, 4, 0) end
+end
+local function touch(a, b)
+	if firetouchinterest then pcall(function() firetouchinterest(a, b, 0); firetouchinterest(a, b, 1) end) end
+end
+
+local gunBusy = false
+local function grabGun(silent)
+	local gun, hrp = workspace:FindFirstChild("GunDrop"), getHRP()
+	if gunBusy then return end
+	if not gun or not hrp then if not silent then notify("No gun dropped") end return end
+	gunBusy = true
+	local back = hrp.CFrame
+	hrp.CFrame = gun.CFrame
+	touch(hrp, gun)
+	task.wait(0.25)
+	hrp.CFrame = back
+	gunBusy = false
+	notify("Gun grabbed")
+end
+
+--// ESP
+local espFolder = new("Folder", {Name = "ESP"}, gui)
+local espData = {}
+local roleColors = {Murderer = Color3.fromRGB(255, 60, 60), Sheriff = Color3.fromRGB(70, 150, 255), Innocent = Color3.fromRGB(90, 230, 120)}
+local hud = new("TextLabel", {AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 4), Size = UDim2.fromOffset(300, 22),
+	BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 0.45, Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = WHITE,
+	RichText = true, Visible = false, Text = ""}, gui)
+corner(hud, UDim.new(0, 8))
+
+local function clearESP(p)
+	local d = espData[p]
+	if d then
+		if d.hl then d.hl:Destroy() end
+		if d.bb then d.bb:Destroy() end
+		espData[p] = nil
+	end
+end
+local function updateESP()
+	if not (S.esp or S.tags or S.hud) then
+		for p in pairs(espData) do clearESP(p) end
+		hud.Visible = false
+		return
+	end
+	local mur, she
+	local myHRP = getHRP()
+	for _, p in ipairs(Players:GetPlayers()) do
+		local role = getRole(p)
+		if role == "Murderer" then mur = p.DisplayName elseif role == "Sheriff" then she = p.DisplayName end
+		if p ~= LP then
+			local char = p.Character
+			local hrp = char and char:FindFirstChild("HumanoidRootPart")
+			if (S.esp or S.tags) and hrp then
+				local d = espData[p] or {}
+				espData[p] = d
+				local col = roleColors[role]
+				if S.esp then
+					if not d.hl or d.hl.Adornee ~= char then
+						if d.hl then d.hl:Destroy() end
+						d.hl = new("Highlight", {Adornee = char, FillTransparency = 0.6, OutlineTransparency = 0, DepthMode = Enum.HighlightDepthMode.AlwaysOnTop}, espFolder)
+					end
+					d.hl.FillColor = col
+					d.hl.OutlineColor = col
+				elseif d.hl then d.hl:Destroy(); d.hl = nil end
+				if S.tags then
+					local head = char:FindFirstChild("Head") or hrp
+					if not d.bb or d.bb.Adornee ~= head then
+						if d.bb then d.bb:Destroy() end
+						d.bb = new("BillboardGui", {Adornee = head, Size = UDim2.fromOffset(130, 34), StudsOffset = Vector3.new(0, 2.2, 0), AlwaysOnTop = true}, espFolder)
+						d.txt = new("TextLabel", {Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Font = Enum.Font.GothamBold, TextSize = 12, TextStrokeTransparency = 0.4}, d.bb)
+					end
+					local dist = myHRP and math.floor((myHRP.Position - hrp.Position).Magnitude) or 0
+					d.txt.Text = p.DisplayName .. " [" .. role .. "]\n" .. dist .. "m"
+					d.txt.TextColor3 = col
+				elseif d.bb then d.bb:Destroy(); d.bb = nil end
+			else
+				clearESP(p)
+			end
+		end
+	end
+	hud.Visible = S.hud
+	if S.hud then
+		hud.Text = string.format("<font color='#ff4d4d'>Murderer: %s</font>   <font color='#4da6ff'>Sheriff: %s</font>", mur or "?", she or "?")
+	end
+end
+bind(Players.PlayerRemoving, clearESP)
+
+--// Fullbright
+local lightBackup
+local function setFullbright(on)
+	if on then
+		lightBackup = {Brightness = Lighting.Brightness, ClockTime = Lighting.ClockTime, FogEnd = Lighting.FogEnd, GlobalShadows = Lighting.GlobalShadows, Ambient = Lighting.Ambient}
+		Lighting.Brightness = 2; Lighting.ClockTime = 14; Lighting.FogEnd = 1e6; Lighting.GlobalShadows = false; Lighting.Ambient = Color3.fromRGB(190, 190, 190)
+	elseif lightBackup then
+		for k, v in pairs(lightBackup) do Lighting[k] = v end
+		lightBackup = nil
+	end
+end
+
+--// Pages
+local pMain, pVisual, pMisc, pTheme = newTab("Main"), newTab("Visual"), newTab("Misc"), newTab("Theme")
+
+addHeader(pMain, "Movement")
+addToggle(pMain, "Speed", "speedOn", function(on) if not on then local h = getHum(); if h then h.WalkSpeed = 16 end end end)
+addSlider(pMain, "Walk speed", "speed", 16, 120)
+addToggle(pMain, "Jump power", "jumpOn", function(on) if not on then local h = getHum(); if h then h.JumpPower = 50 end end end)
+addSlider(pMain, "Jump", "jump", 50, 200)
+addToggle(pMain, "Infinite jump", "inf")
+addToggle(pMain, "Noclip", "noclip")
+addToggle(pMain, "Fly", "fly", function(on) if not on then local h = getHum(); if h then h.PlatformStand = false end end end)
+addSlider(pMain, "Fly speed", "flySpeed", 20, 150)
+addHeader(pMain, "Farm / Gun")
+addToggle(pMain, "Auto collect coins", "coin")
+addSlider(pMain, "Coin speed", "coinSpeed", 20, 100)
+addToggle(pMain, "Auto grab gun", "autoGun")
+addButton(pMain, "Grab gun now", function() grabGun(false) end)
+addHeader(pMain, "Teleport")
+addButton(pMain, "TP to Lobby", function()
+	local lobby = workspace:FindFirstChild("Lobby")
+	local part = lobby and (anyPart(lobby:FindFirstChild("Spawns")) or lobby:FindFirstChildWhichIsA("SpawnLocation", true))
+	if part then tpTo(part) else notify("Lobby not found") end
+end)
+addButton(pMain, "TP to Map", function()
+	local m = findMap()
+	local part = m and (anyPart(m:FindFirstChild("Spawns")) or anyPart(m))
+	if part then tpTo(part) else notify("No map right now") end
+end)
+
+addHeader(pVisual, "ESP")
+addToggle(pVisual, "ESP highlight (role colors)", "esp")
+addToggle(pVisual, "Name + distance + role", "tags")
+addToggle(pVisual, "Role HUD (murderer / sheriff)", "hud")
+addHeader(pVisual, "View")
+addToggle(pVisual, "Fullbright", "full", setFullbright)
+addSlider(pVisual, "Field of view", "fov", 40, 120, function(v) Cam = workspace.CurrentCamera; Cam.FieldOfView = v end)
+addToggle(pVisual, "Floating particles (theme)", "particles")
+
+addHeader(pMisc, "Utility")
+addToggle(pMisc, "Anti-AFK", "afk")
+addButton(pMisc, "Reset character", function() local h = getHum(); if h then h.Health = 0 end end)
+addButton(pMisc, "Rejoin server", function() TeleportService:Teleport(game.PlaceId, LP) end)
+
+addHeader(pTheme, "Color themes")
+local grid = new("Frame", {BackgroundTransparency = 1, Size = UDim2.new(1, -6, 0, 0), AutomaticSize = Enum.AutomaticSize.Y}, pTheme)
+new("UIGridLayout", {CellSize = UDim2.new(0.5, -3, 0, 40), CellPadding = UDim2.fromOffset(6, 6), SortOrder = Enum.SortOrder.LayoutOrder}, grid)
+
+local function applyTheme(t, instant)
+	curTheme = t
+	if t.special == "rainbow" then return end -- Heartbeat handles it
+	if instant then
+		vA.Value, vB.Value, vAcc.Value = t.a, t.b, t.acc
+	else
+		tw(vA, 0.6, {Value = t.a}); tw(vB, 0.6, {Value = t.b}); tw(vAcc, 0.6, {Value = t.acc})
+	end
+end
+for i, t in ipairs(Themes) do
+	local b = new("TextButton", {Lay
