@@ -1,0 +1,348 @@
+-- GlassHub | Liquid Glass GUI cho Delta X
+-- Tính năng: nút nhỏ đóng/mở, nút khoá (góc trên trái), theme (Rainbow / Valentine / Lucky ...)
+
+local Players = game:GetService("Players")
+local UIS = game:GetService("UserInputService")
+local TS = game:GetService("TweenService")
+local RS = game:GetService("RunService")
+local Lighting = game:GetService("Lighting")
+local lp = Players.LocalPlayer
+
+local root = (gethui and gethui()) or game:GetService("CoreGui")
+pcall(function()
+	if root:FindFirstChild("GlassHub") then root.GlassHub:Destroy() end
+	if Lighting:FindFirstChild("GlassHubBlur") then Lighting.GlassHubBlur:Destroy() end
+end)
+
+local function new(class, props, parent)
+	local o = Instance.new(class)
+	for k, v in pairs(props) do o[k] = v end
+	if parent then o.Parent = parent end
+	return o
+end
+
+local function tween(o, t, props, style)
+	local tw = TS:Create(o, TweenInfo.new(t, style or Enum.EasingStyle.Quint, Enum.EasingDirection.Out), props)
+	tw:Play()
+	return tw
+end
+
+---------------------------------------------------------------- THEMES
+local Themes = {
+	{ name = "Ocean",     a = Color3.fromRGB(80, 170, 255),  b = Color3.fromRGB(140, 110, 255) },
+	{ name = "Sunset",    a = Color3.fromRGB(255, 140, 90),  b = Color3.fromRGB(255, 80, 150) },
+	{ name = "Mint",      a = Color3.fromRGB(90, 230, 190),  b = Color3.fromRGB(80, 170, 255) },
+	{ name = "Dark",      a = Color3.fromRGB(150, 150, 170), b = Color3.fromRGB(70, 70, 90) },
+	{ name = "Rainbow",   special = "rainbow" },
+	{ name = "Valentine", a = Color3.fromRGB(255, 90, 150),  b = Color3.fromRGB(255, 175, 205), special = "heart" },
+	{ name = "Lucky",     a = Color3.fromRGB(70, 200, 110),  b = Color3.fromRGB(190, 235, 120), special = "clover" },
+}
+local current = Themes[1]
+local gradients, accents = {}, {}
+
+local function applyColors(a, b)
+	for _, g in ipairs(gradients) do g.Color = ColorSequence.new(a, b) end
+	for _, x in ipairs(accents) do x[1][x[2]] = a end
+end
+
+---------------------------------------------------------------- GUI
+local gui = new("ScreenGui", { Name = "GlassHub", ResetOnSpawn = false, ZIndexBehavior = Enum.ZIndexBehavior.Sibling, IgnoreGuiInset = true }, root)
+
+local blur = new("BlurEffect", { Name = "GlassHubBlur", Size = 0 }, Lighting)
+local blurEnabled = true
+
+-- cửa sổ chính (CanvasGroup để fade + clip hiệu ứng)
+local main = new("CanvasGroup", {
+	Name = "Main", Size = UDim2.fromOffset(380, 270), Position = UDim2.new(0.5, -190, 0.5, -135),
+	BackgroundColor3 = Color3.fromRGB(255, 255, 255), BackgroundTransparency = 0.78,
+	GroupTransparency = 0, BorderSizePixel = 0,
+}, gui)
+new("UICorner", { CornerRadius = UDim.new(0, 18) }, main)
+local mainScale = new("UIScale", { Scale = 1 }, main)
+
+-- lớp "kính": gradient sáng chéo
+local sheen = new("UIGradient", {
+	Rotation = 35,
+	Color = ColorSequence.new(Color3.new(1, 1, 1), Color3.fromRGB(200, 215, 255)),
+	Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.55), NumberSequenceKeypoint.new(0.5, 0.85), NumberSequenceKeypoint.new(1, 0.7),
+	}),
+}, main)
+
+local stroke = new("UIStroke", { Thickness = 1.6, Transparency = 0.25, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, main)
+local strokeGrad = new("UIGradient", { Rotation = 45 }, stroke)
+table.insert(gradients, strokeGrad)
+
+-- nền màu nhẹ theo theme phía sau nội dung
+local tint = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.new(1, 1, 1), BackgroundTransparency = 0.82, BorderSizePixel = 0, ZIndex = 0 }, main)
+local tintGrad = new("UIGradient", { Rotation = 60 }, tint)
+table.insert(gradients, tintGrad)
+
+-- vùng hiệu ứng trôi nổi
+local fx = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, ZIndex = 1 }, main)
+
+-- tiêu đề
+local title = new("TextLabel", {
+	Text = "GlassHub", Font = Enum.Font.GothamBold, TextSize = 16, TextColor3 = Color3.new(1, 1, 1),
+	BackgroundTransparency = 1, Position = UDim2.fromOffset(44, 6), Size = UDim2.new(1, -90, 0, 28),
+	TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 5,
+}, main)
+
+-- nút khoá (góc trên trái)
+local locked = false
+local lockBtn = new("TextButton", {
+	Text = "🔓", TextSize = 14, Font = Enum.Font.GothamBold, TextColor3 = Color3.new(1, 1, 1),
+	Size = UDim2.fromOffset(28, 28), Position = UDim2.fromOffset(8, 8),
+	BackgroundColor3 = Color3.new(1, 1, 1), BackgroundTransparency = 0.7, AutoButtonColor = false, ZIndex = 6,
+}, main)
+new("UICorner", { CornerRadius = UDim.new(1, 0) }, lockBtn)
+
+-- nút đóng nhỏ trong cửa sổ
+local closeBtn = new("TextButton", {
+	Text = "–", TextSize = 20, Font = Enum.Font.GothamBold, TextColor3 = Color3.new(1, 1, 1),
+	Size = UDim2.fromOffset(28, 28), Position = UDim2.new(1, -36, 0, 8),
+	BackgroundColor3 = Color3.new(1, 1, 1), BackgroundTransparency = 0.7, AutoButtonColor = false, ZIndex = 6,
+}, main)
+new("UICorner", { CornerRadius = UDim.new(1, 0) }, closeBtn)
+
+-- nút nhỏ đóng/mở (bubble)
+local bubble = new("TextButton", {
+	Text = "◈", TextSize = 20, Font = Enum.Font.GothamBold, TextColor3 = Color3.new(1, 1, 1),
+	Size = UDim2.fromOffset(42, 42), Position = UDim2.new(0, 14, 0.5, -21),
+	BackgroundColor3 = Color3.new(1, 1, 1), BackgroundTransparency = 0.55, AutoButtonColor = false, ZIndex = 20,
+}, gui)
+new("UICorner", { CornerRadius = UDim.new(1, 0) }, bubble)
+local bStroke = new("UIStroke", { Thickness = 1.6, Transparency = 0.2 }, bubble)
+table.insert(gradients, new("UIGradient", { Rotation = 45 }, bStroke))
+table.insert(accents, { bubble, "BackgroundColor3" })
+
+---------------------------------------------------------------- DRAG
+local moved = false
+local function makeDrag(handle, target)
+	local dragging, startIn, startPos
+	handle.InputBegan:Connect(function(i)
+		if (i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch) and not locked then
+			dragging, moved, startIn, startPos = true, false, i.Position, target.Position
+			i.Changed:Connect(function()
+				if i.UserInputState == Enum.UserInputState.End then dragging = false end
+			end)
+		end
+	end)
+	UIS.InputChanged:Connect(function(i)
+		if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
+			local d = i.Position - startIn
+			if d.Magnitude > 6 then moved = true end
+			target.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
+		end
+	end)
+end
+makeDrag(main, main)
+makeDrag(bubble, bubble)
+
+lockBtn.MouseButton1Click:Connect(function()
+	locked = not locked
+	lockBtn.Text = locked and "🔒" or "🔓"
+	tween(lockBtn, 0.2, { BackgroundTransparency = locked and 0.35 or 0.7 })
+end)
+
+---------------------------------------------------------------- OPEN / CLOSE
+local isOpen = true
+local function setOpen(v)
+	isOpen = v
+	if v then
+		main.Visible = true
+		mainScale.Scale = 0.85
+		main.GroupTransparency = 1
+		tween(mainScale, 0.35, { Scale = 1 }, Enum.EasingStyle.Back)
+		tween(main, 0.3, { GroupTransparency = 0 })
+		if blurEnabled then tween(blur, 0.4, { Size = 10 }) end
+	else
+		tween(mainScale, 0.25, { Scale = 0.85 })
+		local t = tween(main, 0.25, { GroupTransparency = 1 })
+		tween(blur, 0.3, { Size = 0 })
+		t.Completed:Connect(function() if not isOpen then main.Visible = false end end)
+	end
+end
+bubble.MouseButton1Click:Connect(function() if not moved then setOpen(not isOpen) end end)
+closeBtn.MouseButton1Click:Connect(function() setOpen(false) end)
+
+---------------------------------------------------------------- TABS / PAGES
+local tabBar = new("Frame", { Position = UDim2.fromOffset(10, 42), Size = UDim2.new(1, -20, 0, 28), BackgroundTransparency = 1, ZIndex = 5 }, main)
+new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 6) }, tabBar)
+
+local pages, tabBtns = {}, {}
+local function addPage(name)
+	local p = new("ScrollingFrame", {
+		Position = UDim2.fromOffset(10, 78), Size = UDim2.new(1, -20, 1, -88), BackgroundTransparency = 1,
+		BorderSizePixel = 0, ScrollBarThickness = 3, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		Visible = false, ZIndex = 5,
+	}, main)
+	new("UIListLayout", { Padding = UDim.new(0, 8) }, p)
+	local b = new("TextButton", {
+		Text = name, Font = Enum.Font.GothamMedium, TextSize = 13, TextColor3 = Color3.new(1, 1, 1),
+		Size = UDim2.fromOffset(84, 28), BackgroundColor3 = Color3.new(1, 1, 1), BackgroundTransparency = 0.8, AutoButtonColor = false, ZIndex = 6,
+	}, tabBar)
+	new("UICorner", { CornerRadius = UDim.new(0, 10) }, b)
+	pages[name], tabBtns[name] = p, b
+	b.MouseButton1Click:Connect(function()
+		for n, pg in pairs(pages) do
+			pg.Visible = (n == name)
+			tween(tabBtns[n], 0.2, { BackgroundTransparency = n == name and 0.5 or 0.8 })
+		end
+	end)
+	return p
+end
+
+local function row(parent, height)
+	local f = new("Frame", { Size = UDim2.new(1, -4, 0, height or 34), BackgroundColor3 = Color3.new(1, 1, 1), BackgroundTransparency = 0.82, ZIndex = 6 }, parent)
+	new("UICorner", { CornerRadius = UDim.new(0, 10) }, f)
+	return f
+end
+
+local function label(parent, text)
+	return new("TextLabel", {
+		Text = text, Font = Enum.Font.Gotham, TextSize = 13, TextColor3 = Color3.new(1, 1, 1), BackgroundTransparency = 1,
+		Size = UDim2.new(1, -16, 1, 0), Position = UDim2.fromOffset(10, 0), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 7,
+	}, parent)
+end
+
+local function button(parent, text, cb)
+	local r = row(parent)
+	local b = new("TextButton", { Text = text, Font = Enum.Font.GothamMedium, TextSize = 13, TextColor3 = Color3.new(1, 1, 1), BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), ZIndex = 7 }, r)
+	b.MouseButton1Click:Connect(function()
+		tween(r, 0.1, { BackgroundTransparency = 0.6 }).Completed:Connect(function() tween(r, 0.2, { BackgroundTransparency = 0.82 }) end)
+		cb()
+	end)
+	return b
+end
+
+local function toggle(parent, text, default, cb)
+	local r = row(parent)
+	label(r, text)
+	local state = default
+	local sw = new("TextButton", { Text = "", Size = UDim2.fromOffset(40, 20), Position = UDim2.new(1, -50, 0.5, -10), BackgroundColor3 = Color3.new(1, 1, 1), BackgroundTransparency = state and 0.2 or 0.7, AutoButtonColor = false, ZIndex = 7 }, r)
+	new("UICorner", { CornerRadius = UDim.new(1, 0) }, sw)
+	local knob = new("Frame", { Size = UDim2.fromOffset(16, 16), Position = state and UDim2.fromOffset(22, 2) or UDim2.fromOffset(2, 2), BackgroundColor3 = Color3.new(1, 1, 1), ZIndex = 8 }, sw)
+	new("UICorner", { CornerRadius = UDim.new(1, 0) }, knob)
+	sw.MouseButton1Click:Connect(function()
+		state = not state
+		tween(knob, 0.2, { Position = state and UDim2.fromOffset(22, 2) or UDim2.fromOffset(2, 2) })
+		tween(sw, 0.2, { BackgroundTransparency = state and 0.2 or 0.7 })
+		cb(state)
+	end)
+end
+
+local function slider(parent, text, min, max, default, cb)
+	local r = row(parent, 48)
+	local lbl = new("TextLabel", { Text = text .. ": " .. default, Font = Enum.Font.Gotham, TextSize = 13, TextColor3 = Color3.new(1, 1, 1), BackgroundTransparency = 1, Position = UDim2.fromOffset(10, 4), Size = UDim2.new(1, -20, 0, 18), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 7 }, r)
+	local bar = new("Frame", { Position = UDim2.new(0, 10, 1, -16), Size = UDim2.new(1, -20, 0, 6), BackgroundColor3 = Color3.new(1, 1, 1), BackgroundTransparency = 0.7, ZIndex = 7 }, r)
+	new("UICorner", { CornerRadius = UDim.new(1, 0) }, bar)
+	local fill = new("Frame", { Size = UDim2.fromScale((default - min) / (max - min), 1), BackgroundColor3 = Color3.new(1, 1, 1), ZIndex = 8 }, bar)
+	new("UICorner", { CornerRadius = UDim.new(1, 0) }, fill)
+	table.insert(accents, { fill, "BackgroundColor3" })
+	local dragging = false
+	local function set(x)
+		local a = math.clamp((x - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1)
+		local v = math.floor(min + (max - min) * a + 0.5)
+		fill.Size = UDim2.fromScale(a, 1)
+		lbl.Text = text .. ": " .. v
+		cb(v)
+	end
+	bar.InputBegan:Connect(function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+			dragging = true; moved = true; set(i.Position.X)
+		end
+	end)
+	UIS.InputChanged:Connect(function(i)
+		if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then set(i.Position.X) end
+	end)
+	UIS.InputEnded:Connect(function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then dragging = false end
+	end)
+end
+
+---------------------------------------------------------------- TAB: MAIN
+local pMain = addPage("Chính")
+local info = row(pMain); local infoLbl = label(info, "FPS: ... | Ping: ...")
+slider(pMain, "FOV", 40, 120, 70, function(v)
+	local cam = workspace.CurrentCamera
+	if cam then cam.FieldOfView = v end
+end)
+-- >>> Thêm chức năng của bạn ở đây, ví dụ: button(pMain, "Tên", function() ... end)
+
+---------------------------------------------------------------- TAB: THEME
+local pTheme = addPage("Giao diện")
+toggle(pTheme, "Làm mờ nền (blur)", true, function(v)
+	blurEnabled = v
+	tween(blur, 0.3, { Size = (v and isOpen) and 10 or 0 })
+end)
+
+local function setTheme(t)
+	current = t
+	if t.special ~= "rainbow" then applyColors(t.a, t.b) end
+end
+for _, t in ipairs(Themes) do
+	local label_ = t.name .. (t.special == "heart" and "  ♥" or t.special == "clover" and "  🍀" or "")
+	button(pTheme, label_, function() setTheme(t) end)
+end
+
+---------------------------------------------------------------- TAB: SETTINGS
+local pSet = addPage("Cài đặt")
+button(pSet, "Huỷ GUI", function()
+	pcall(function() blur:Destroy() end)
+	gui:Destroy()
+end)
+
+-- mở tab đầu
+tabBtns["Chính"].MouseButton1Click:Fire()
+tabBtns["Chính"].BackgroundTransparency = 0.5
+pages["Chính"].Visible = true
+
+---------------------------------------------------------------- LOOPS
+local fps = 60
+RS.RenderStepped:Connect(function(dt)
+	fps = fps + (1 / dt - fps) * 0.1
+	-- sheen chuyển động nhẹ (liquid)
+	sheen.Offset = Vector2.new(math.sin(tick() * 0.6) * 0.25, math.cos(tick() * 0.5) * 0.25)
+	strokeGrad.Rotation = (tick() * 40) % 360
+	if current.special == "rainbow" then
+		local h = (tick() * 0.15) % 1
+		applyColors(Color3.fromHSV(h, 0.7, 1), Color3.fromHSV((h + 0.3) % 1, 0.7, 1))
+	end
+end)
+
+task.spawn(function()
+	while gui.Parent do
+		local ping = math.floor((lp:GetNetworkPing() or 0) * 1000)
+		infoLbl.Text = ("FPS: %d  |  Ping: %d ms"):format(fps, ping)
+		task.wait(0.5)
+	end
+end)
+
+-- hiệu ứng trôi nổi (tim / cỏ 4 lá)
+task.spawn(function()
+	local rng = Random.new()
+	while gui.Parent do
+		local sp = current.special
+		if (sp == "heart" or sp == "clover") and isOpen then
+			local size = rng:NextInteger(14, 26)
+			local x = rng:NextNumber(0.03, 0.95)
+			local p = new("TextLabel", {
+				Text = sp == "heart" and "♥" or "🍀", TextSize = size, Font = Enum.Font.GothamBold,
+				TextColor3 = sp == "heart" and Color3.fromRGB(255, rng:NextInteger(70, 150), rng:NextInteger(120, 190)) or Color3.fromRGB(110, 220, 130),
+				BackgroundTransparency = 1, Size = UDim2.fromOffset(size, size), Position = UDim2.new(x, 0, 1.05, 0),
+				TextTransparency = 0.15, Rotation = rng:NextInteger(-20, 20),
+			}, fx)
+			local dur = rng:NextNumber(4, 7)
+			TS:Create(p, TweenInfo.new(dur, Enum.EasingStyle.Sine), {
+				Position = UDim2.new(math.clamp(x + rng:NextNumber(-0.12, 0.12), 0, 0.95), 0, -0.1, 0),
+				TextTransparency = 1, Rotation = rng:NextInteger(-40, 40),
+			}):Play()
+			task.delay(dur, function() p:Destroy() end)
+		end
+		task.wait(0.3)
+	end
+end)
+
+setTheme(Themes[1])
+tween(blur, 0.5, { Size = 10 })
