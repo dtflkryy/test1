@@ -1,0 +1,458 @@
+--[[
+    MM2 • Liquid Glass Hub  (Delta Executor)
+    - Nút nhỏ ◈ để đóng/mở GUI
+    - Nút 🔓/🔒 góc trên trái: khoá di chuyển GUI + nút nhỏ
+    - Bảng màu: Ocean, Sunset, Mint, Violet, Mono, RGB, Valentine (tim), Lucky (cỏ 4 lá)
+]]
+
+if not game:IsLoaded() then game.Loaded:Wait() end
+
+local Players      = game:GetService("Players")
+local RunService   = game:GetService("RunService")
+local UIS          = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local Lighting     = game:GetService("Lighting")
+local CoreGui      = game:GetService("CoreGui")
+local LP           = Players.LocalPlayer
+
+local env = (getgenv and getgenv()) or _G
+if env.MM2GlassCleanup then pcall(env.MM2GlassCleanup) end
+
+local GUI_NAME = "MM2LiquidGlass"
+
+local function getParent()
+    local ok, h = pcall(function() return gethui and gethui() end)
+    if ok and h then return h end
+    if pcall(function() return CoreGui.Name end) then return CoreGui end
+    return LP:WaitForChild("PlayerGui")
+end
+local Parent = getParent()
+
+---------------------------------------------------------------------
+-- Helpers
+---------------------------------------------------------------------
+local white = Color3.new(1, 1, 1)
+local GREY  = Color3.fromRGB(90, 95, 110)
+local kp    = NumberSequenceKeypoint.new
+local ck    = ColorSequenceKeypoint.new
+local function C(r, g, b) return Color3.fromRGB(r, g, b) end
+
+local conns = {}
+local function bind(sig, fn)
+    local c = sig:Connect(fn)
+    conns[#conns + 1] = c
+    return c
+end
+
+local function New(class, props, parent)
+    local o = Instance.new(class)
+    for k, v in pairs(props or {}) do o[k] = v end
+    if parent then o.Parent = parent end
+    return o
+end
+local function Corner(o, r) return New("UICorner", {CornerRadius = UDim.new(0, r)}, o) end
+local function Round(o) return New("UICorner", {CornerRadius = UDim.new(0.5, 0)}, o) end
+local function Tween(o, t, props, style, dir)
+    local tw = TweenService:Create(o, TweenInfo.new(t, style or Enum.EasingStyle.Quint, dir or Enum.EasingDirection.Out), props)
+    tw:Play()
+    return tw
+end
+
+---------------------------------------------------------------------
+-- State
+---------------------------------------------------------------------
+local S = {
+    locked = false,
+    speed = false, speedVal = 32,
+    jump = false, jumpVal = 100,
+    infjump = false, noclip = false,
+    fly = false, flySpeed = 60,
+    esp = false, espName = true, espGun = false,
+    antiafk = false, fullbright = false,
+}
+
+---------------------------------------------------------------------
+-- Theme system
+---------------------------------------------------------------------
+local THEMES = {
+    {name = "🌊 Ocean",     accent = C(0, 170, 255),  accent2 = C(120, 90, 255), bg = C(10, 18, 38)},
+    {name = "🌅 Sunset",    accent = C(255, 120, 80), accent2 = C(255, 60, 140), bg = C(40, 16, 28)},
+    {name = "🌿 Mint",      accent = C(60, 230, 180), accent2 = C(80, 160, 255), bg = C(8, 32, 30)},
+    {name = "🔮 Violet",    accent = C(170, 110, 255),accent2 = C(255, 110, 220),bg = C(24, 14, 42)},
+    {name = "🖤 Mono",      accent = C(230, 230, 240),accent2 = C(140, 140, 165),bg = C(18, 18, 22)},
+    {name = "🌈 RGB",       accent = C(255, 60, 60),  accent2 = C(60, 120, 255), bg = C(30, 14, 14), rainbow = true},
+    {name = "💘 Valentine", accent = C(255, 90, 150), accent2 = C(255, 160, 200),bg = C(50, 10, 30), particle = "heart"},
+    {name = "🍀 Lucky",     accent = C(60, 220, 110), accent2 = C(255, 214, 80), bg = C(8, 34, 16),   particle = "clover"},
+}
+
+local Theme  = {accent = THEMES[1].accent, accent2 = THEMES[1].accent2, bg = THEMES[1].bg}
+local Target = {accent = THEMES[1].accent, accent2 = THEMES[1].accent2, bg = THEMES[1].bg, rainbow = false, particle = nil}
+
+local themedCbs = {}
+local function Themed(fn)
+    themedCbs[#themedCbs + 1] = fn
+    fn()
+end
+local function refreshTheme()
+    for _, f in ipairs(themedCbs) do f() end
+end
+
+---------------------------------------------------------------------
+-- Root GUI
+---------------------------------------------------------------------
+local Gui = New("ScreenGui", {
+    Name = GUI_NAME, ResetOnSpawn = false, DisplayOrder = 999,
+    ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+}, Parent)
+local espFolder = New("Folder", {Name = GUI_NAME .. "_ESP"}, Parent)
+
+local vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(800, 600)
+local BASE_SCALE = math.clamp(vp.X / 720, 0.78, 1)
+local glassT = 0.3
+
+local Main = New("Frame", {
+    Name = "Main", AnchorPoint = Vector2.new(0.5, 0.5),
+    Size = UDim2.fromOffset(372, 262), Position = UDim2.new(0.5, 0, 0.5, 0),
+    BackgroundColor3 = Theme.bg, BackgroundTransparency = glassT,
+    BorderSizePixel = 0, ClipsDescendants = true,
+}, Gui)
+Corner(Main, 20)
+local MainScale = New("UIScale", {Scale = BASE_SCALE}, Main)
+
+local Stroke = New("UIStroke", {Thickness = 1.5, Color = white, ApplyStrokeMode = Enum.ApplyStrokeMode.Border}, Main)
+local StrokeGrad = New("UIGradient", {
+    Rotation = 45,
+    Transparency = NumberSequence.new({kp(0, 0.05), kp(0.5, 0.8), kp(1, 0.1)}),
+}, Stroke)
+
+-- Layer 1: liquid blobs
+local Blobs = New("Frame", {Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, ZIndex = 1}, Main)
+local blobs = {}
+local function MakeBlob(size, key, bx, by, ax, ay, s1, s2, ph)
+    local f = New("Frame", {
+        Size = UDim2.fromOffset(size, size), BackgroundTransparency = 1,
+        AnchorPoint = Vector2.new(0.5, 0.5),
+    }, Blobs)
+    local circles = {}
+    local layers = {{1, 0.93}, {0.72, 0.88}, {0.46, 0.8}}
+    for i, l in ipairs(layers) do
+        local c = New("Frame", {
+            AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
+            Size = UDim2.fromScale(l[1], l[1]), BackgroundTransparency = l[2], BorderSizePixel = 0,
+        }, f)
+        Round(c)
+        circles[i] = c
+    end
+    blobs[#blobs + 1] = {f = f, circles = circles, key = key, bx = bx, by = by, ax = ax, ay = ay, s1 = s1, s2 = s2, ph = ph}
+end
+MakeBlob(200, "accent",  0.22, 0.35, 0.10, 0.14, 0.55, 0.42, 0)
+MakeBlob(220, "accent2", 0.78, 0.68, 0.12, 0.12, 0.40, 0.58, 2)
+MakeBlob(150, "mix",     0.55, 0.22, 0.14, 0.10, 0.62, 0.48, 4)
+
+-- Layer 2: particles
+local Particles = New("Frame", {Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, ZIndex = 2}, Main)
+
+-- Layer 3: glass sheen
+local Sheen = New("Frame", {
+    Size = UDim2.fromScale(1, 1), BackgroundColor3 = white, BackgroundTransparency = 0,
+    BorderSizePixel = 0, ZIndex = 3,
+}, Main)
+Corner(Sheen, 20)
+New("UIGradient", {
+    Rotation = 35,
+    Transparency = NumberSequence.new({kp(0, 0.84), kp(0.45, 0.96), kp(0.55, 0.97), kp(1, 0.9)}),
+}, Sheen)
+local Shine = New("Frame", {
+    Size = UDim2.new(1, -40, 0, 1), Position = UDim2.new(0, 20, 0, 1),
+    BackgroundColor3 = white, BorderSizePixel = 0, ZIndex = 3,
+}, Main)
+New("UIGradient", {Transparency = NumberSequence.new({kp(0, 1), kp(0.5, 0.3), kp(1, 1)})}, Shine)
+
+-- Layer 4: content
+local Content = New("Frame", {Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, ZIndex = 4}, Main)
+
+---------------------------------------------------------------------
+-- Mini toggle button
+---------------------------------------------------------------------
+local Mini = New("TextButton", {
+    Name = "Mini", Size = UDim2.fromOffset(46, 46), Position = UDim2.new(0, 14, 0.35, 0),
+    BackgroundColor3 = Theme.bg, BackgroundTransparency = 0.3, BorderSizePixel = 0,
+    Text = "◈", TextColor3 = white, Font = Enum.Font.GothamBold, TextSize = 24,
+    AutoButtonColor = false,
+}, Gui)
+Round(Mini)
+local MiniStroke = New("UIStroke", {Thickness = 1.5, Color = white, ApplyStrokeMode = Enum.ApplyStrokeMode.Border}, Mini)
+local MiniGrad = New("UIGradient", {
+    Rotation = 45, Transparency = NumberSequence.new({kp(0, 0.05), kp(0.5, 0.8), kp(1, 0.1)}),
+}, MiniStroke)
+local MiniSheen = New("Frame", {Size = UDim2.fromScale(1, 1), BackgroundColor3 = white, BackgroundTransparency = 0, BorderSizePixel = 0}, Mini)
+Round(MiniSheen)
+New("UIGradient", {Rotation = 40, Transparency = NumberSequence.new({kp(0, 0.78), kp(0.5, 0.95), kp(1, 0.9)})}, MiniSheen)
+
+---------------------------------------------------------------------
+-- Dragging
+---------------------------------------------------------------------
+local function MakeDraggable(handle, target, onTap)
+    local dragging, moved, startMouse, startPos = false, false, nil, nil
+    handle.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging, moved = true, false
+            startMouse, startPos = input.Position, target.Position
+            local ch
+            ch = input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    ch:Disconnect()
+                    dragging = false
+                    if not moved and onTap then onTap() end
+                end
+            end)
+        end
+    end)
+    bind(UIS.InputChanged, function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local d = input.Position - startMouse
+            if d.Magnitude > 5 then moved = true end
+            if moved and not S.locked then
+                target.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
+            end
+        end
+    end)
+end
+
+---------------------------------------------------------------------
+-- Open / close
+---------------------------------------------------------------------
+local isOpen = true
+local function setOpen(v)
+    isOpen = v
+    if v then
+        Main.Visible = true
+        MainScale.Scale = 0.5 * BASE_SCALE
+        Tween(MainScale, 0.4, {Scale = BASE_SCALE}, Enum.EasingStyle.Back)
+    else
+        Tween(MainScale, 0.22, {Scale = 0.01}, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+        task.delay(0.23, function()
+            if not isOpen then Main.Visible = false end
+        end)
+    end
+end
+MakeDraggable(Mini, Mini, function() setOpen(not isOpen) end)
+
+---------------------------------------------------------------------
+-- Title bar
+---------------------------------------------------------------------
+local TitleBar = New("Frame", {Size = UDim2.new(1, 0, 0, 42), BackgroundTransparency = 1, Active = true}, Content)
+MakeDraggable(TitleBar, Main)
+
+local function SmallBtn(text, pos)
+    local b = New("TextButton", {
+        Size = UDim2.fromOffset(28, 28), Position = pos,
+        BackgroundColor3 = white, BackgroundTransparency = 0.88, BorderSizePixel = 0,
+        Text = text, TextColor3 = white, Font = Enum.Font.GothamBold, TextSize = 14,
+        AutoButtonColor = false,
+    }, TitleBar)
+    Round(b)
+    New("UIStroke", {Color = white, Transparency = 0.8, Thickness = 1}, b)
+    return b
+end
+
+local LockBtn = SmallBtn("🔓", UDim2.fromOffset(10, 7))
+local CloseBtn = SmallBtn("—", UDim2.new(1, -38, 0, 7))
+New("TextLabel", {
+    Size = UDim2.new(1, -120, 1, 0), Position = UDim2.fromOffset(46, 0), BackgroundTransparency = 1,
+    Text = "MM2 • Liquid Glass", TextColor3 = white, Font = Enum.Font.GothamBold, TextSize = 14,
+    TextXAlignment = Enum.TextXAlignment.Left,
+}, TitleBar)
+
+LockBtn.Activated:Connect(function()
+    S.locked = not S.locked
+    LockBtn.Text = S.locked and "🔒" or "🔓"
+    Tween(LockBtn, 0.2, {BackgroundTransparency = S.locked and 0.6 or 0.88})
+end)
+CloseBtn.Activated:Connect(function() setOpen(false) end)
+
+---------------------------------------------------------------------
+-- Tabs & pages
+---------------------------------------------------------------------
+local TabBar = New("Frame", {Size = UDim2.new(1, -20, 0, 28), Position = UDim2.fromOffset(10, 46), BackgroundTransparency = 1}, Content)
+New("UIGridLayout", {CellSize = UDim2.new(0.25, -5, 1, 0), CellPadding = UDim2.fromOffset(6, 0), SortOrder = Enum.SortOrder.LayoutOrder}, TabBar)
+local PageHolder = New("Frame", {Size = UDim2.new(1, -20, 1, -88), Position = UDim2.fromOffset(10, 80), BackgroundTransparency = 1}, Content)
+
+local tabs, currentPage = {}, nil
+local order = {}
+local function nextOrder(p) order[p] = (order[p] or 0) + 1 return order[p] end
+
+local function SelectTab(page)
+    currentPage = page
+    for _, t in ipairs(tabs) do
+        t.page.Visible = (t.page == page)
+        Tween(t.btn, 0.25, {BackgroundTransparency = t.page == page and 0.45 or 0.9})
+    end
+end
+
+local function AddTab(name)
+    local btn = New("TextButton", {
+        Text = name, BackgroundColor3 = white, BackgroundTransparency = 0.9, BorderSizePixel = 0,
+        Font = Enum.Font.GothamMedium, TextSize = 12, TextColor3 = white, AutoButtonColor = false,
+        LayoutOrder = #tabs + 1,
+    }, TabBar)
+    Corner(btn, 8)
+    local page = New("ScrollingFrame", {
+        Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, BorderSizePixel = 0,
+        ScrollBarThickness = 3, AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new(),
+        Visible = false, ScrollingDirection = Enum.ScrollingDirection.Y,
+    }, PageHolder)
+    New("UIListLayout", {Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder}, page)
+    New("UIPadding", {PaddingBottom = UDim.new(0, 6)}, page)
+    local entry = {btn = btn, page = page}
+    tabs[#tabs + 1] = entry
+    btn.Activated:Connect(function() SelectTab(page) end)
+    Themed(function()
+        btn.BackgroundColor3 = (currentPage == page) and Theme.accent or white
+        page.ScrollBarImageColor3 = Theme.accent
+    end)
+    return page
+end
+
+---------------------------------------------------------------------
+-- UI components
+---------------------------------------------------------------------
+local function Row(page, h)
+    local r = New("Frame", {
+        Size = UDim2.new(1, -6, 0, h), BackgroundColor3 = white, BackgroundTransparency = 0.9,
+        BorderSizePixel = 0, LayoutOrder = nextOrder(page),
+    }, page)
+    Corner(r, 10)
+    New("UIStroke", {Color = white, Transparency = 0.85, Thickness = 1}, r)
+    return r
+end
+
+local function Section(page, text)
+    local l = New("TextLabel", {
+        Size = UDim2.new(1, -6, 0, 18), BackgroundTransparency = 1, Text = text,
+        Font = Enum.Font.GothamBold, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left,
+        LayoutOrder = nextOrder(page), TextColor3 = white,
+    }, page)
+    Themed(function() l.TextColor3 = Theme.accent end)
+    return l
+end
+
+local function Toggle(page, text, default, cb)
+    local r = Row(page, 34)
+    New("TextLabel", {
+        Size = UDim2.new(1, -70, 1, 0), Position = UDim2.fromOffset(12, 0), BackgroundTransparency = 1,
+        Text = text, TextColor3 = C(235, 238, 245), Font = Enum.Font.GothamMedium, TextSize = 13,
+        TextXAlignment = Enum.TextXAlignment.Left,
+    }, r)
+    local sw = New("Frame", {Size = UDim2.fromOffset(40, 20), Position = UDim2.new(1, -50, 0.5, -10), BackgroundColor3 = GREY, BorderSizePixel = 0}, r)
+    Round(sw)
+    local fill = New("Frame", {Size = UDim2.fromScale(1, 1), BackgroundColor3 = Theme.accent, BackgroundTransparency = default and 0 or 1, BorderSizePixel = 0}, sw)
+    Round(fill)
+    local knob = New("Frame", {
+        Size = UDim2.fromOffset(16, 16), Position = default and UDim2.fromOffset(22, 2) or UDim2.fromOffset(2, 2),
+        BackgroundColor3 = white, BorderSizePixel = 0,
+    }, sw)
+    Round(knob)
+    Themed(function() fill.BackgroundColor3 = Theme.accent end)
+    local state = default
+    local btn = New("TextButton", {Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = ""}, r)
+    btn.Activated:Connect(function()
+        state = not state
+        Tween(knob, 0.2, {Position = state and UDim2.fromOffset(22, 2) or UDim2.fromOffset(2, 2)})
+        Tween(fill, 0.2, {BackgroundTransparency = state and 0 or 1})
+        cb(state)
+    end)
+end
+
+local function Slider(page, text, min, max, default, cb)
+    local r = Row(page, 46)
+    New("TextLabel", {
+        Size = UDim2.new(0.6, 0, 0, 22), Position = UDim2.fromOffset(12, 2), BackgroundTransparency = 1,
+        Text = text, TextColor3 = C(235, 238, 245), Font = Enum.Font.GothamMedium, TextSize = 13,
+        TextXAlignment = Enum.TextXAlignment.Left,
+    }, r)
+    local val = New("TextLabel", {
+        Size = UDim2.new(0.3, 0, 0, 22), Position = UDim2.new(0.7, -12, 0, 2), BackgroundTransparency = 1,
+        Text = tostring(default), TextColor3 = white, Font = Enum.Font.GothamBold, TextSize = 13,
+        TextXAlignment = Enum.TextXAlignment.Right,
+    }, r)
+    local track = New("Frame", {
+        Size = UDim2.new(1, -24, 0, 6), Position = UDim2.new(0, 12, 0, 32),
+        BackgroundColor3 = GREY, BackgroundTransparency = 0.35, BorderSizePixel = 0,
+    }, r)
+    Round(track)
+    local fill = New("Frame", {Size = UDim2.fromScale(0, 1), BackgroundColor3 = Theme.accent, BorderSizePixel = 0}, track)
+    Round(fill)
+    local knob = New("Frame", {
+        Size = UDim2.fromOffset(14, 14), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0, 0, 0.5, 0),
+        BackgroundColor3 = white, BorderSizePixel = 0,
+    }, track)
+    Round(knob)
+    Themed(function() fill.BackgroundColor3 = Theme.accent end)
+
+    local function set(v)
+        v = math.clamp(math.floor(v + 0.5), min, max)
+        local a = (v - min) / (max - min)
+        fill.Size = UDim2.fromScale(a, 1)
+        knob.Position = UDim2.new(a, 0, 0.5, 0)
+        val.Text = tostring(v)
+        cb(v)
+    end
+    local function fromInput(pos)
+        local a = math.clamp((pos.X - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
+        set(min + (max - min) * a)
+    end
+    local dragging = false
+    local hit = New("TextButton", {
+        Size = UDim2.new(1, -12, 0, 26), Position = UDim2.new(0, 6, 0, 20), BackgroundTransparency = 1, Text = "",
+    }, r)
+    hit.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            fromInput(i.Position)
+            local ch
+            ch = i.Changed:Connect(function()
+                if i.UserInputState == Enum.UserInputState.End then dragging = false ch:Disconnect() end
+            end)
+        end
+    end)
+    bind(UIS.InputChanged, function(i)
+        if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
+            fromInput(i.Position)
+        end
+    end)
+    set(default)
+end
+
+local function Button(page, text, cb)
+    local b = New("TextButton", {
+        Size = UDim2.new(1, -6, 0, 34), BackgroundColor3 = Theme.accent, BackgroundTransparency = 0.55,
+        BorderSizePixel = 0, Text = text, TextColor3 = white, Font = Enum.Font.GothamBold, TextSize = 13,
+        AutoButtonColor = false, LayoutOrder = nextOrder(page),
+    }, page)
+    Corner(b, 10)
+    New("UIStroke", {Color = white, Transparency = 0.8, Thickness = 1}, b)
+    Themed(function() b.BackgroundColor3 = Theme.accent end)
+    b.Activated:Connect(function()
+        b.BackgroundTransparency = 0.2
+        Tween(b, 0.3, {BackgroundTransparency = 0.55})
+        cb()
+    end)
+end
+
+local function Note(page, text)
+    New("TextLabel", {
+        Size = UDim2.new(1, -6, 0, 30), BackgroundTransparency = 1, Text = text, TextWrapped = true,
+        TextColor3 = C(190, 195, 210), Font = Enum.Font.Gotham, TextSize = 11,
+        TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
+        LayoutOrder = nextOrder(page),
+    }, page)
+end
+
+---------------------------------------------------------------------
+-- Character helpers
+---------------------------------------------------------------------
+local function getHum() local c = LP.Character return c and c:FindFirstChildOfClass("Humanoid") end
+local function getRoot() local c = LP.Character return c and c:FindFirstChild("HumanoidRootPart") end
+
+--------------
